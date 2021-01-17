@@ -1,0 +1,24 @@
+<VirtualHost *:80>
+  ServerName {{ item.ServerName }}
+  {% if item.ServerAlias is defined %}
+  {% for alias in item.ServerAlias %}
+  ServerAlias {{ alias }}
+  {% endfor %}
+  {% endif %}
+ServerAdmin {{ item.ServerAdmin }}
+
+  RewriteEngine On
+  # This will enable the Rewrite capabilities
+
+  RewriteCond %{HTTPS} !=on
+  # This checks to make sure the connection is not already HTTPS
+
+  RewriteRule ^/?(.*) https://%{SERVER_NAME}/$1 [R,L]
+  # This rule will redirect users from their original location, to the same location but using HTTPS.
+  # i.e.  http://www.example.com/foo/ to https://www.example.com/foo/
+  # The leading slash is made optional so that this will work either in httpd.conf
+  # or .htaccess context
+
+  ErrorLog ${APACHE_LOG_DIR}/error.log
+  CustomLog ${APACHE_LOG_DIR}/access.log combined
+</VirtualHost> 

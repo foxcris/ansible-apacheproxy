@@ -1,0 +1,79 @@
+---
+  - name: Remove already existing apacheproxy container
+    community.general.docker_container:
+      name: apacheproxy
+      state: absent
+
+  - name: Setup necessary folders
+    file:
+      path: '{{ item }}'
+      state: directory
+      owner: '1997'
+      group: '1995'
+      mode: '0755'
+    with_items:
+      - '{{ LOCAL_DOCKER_VOLUME_STORAGE_PATH }}/apacheproxy/etc/apache2/sites-available'
+      - '{{ LOCAL_DOCKER_VOLUME_STORAGE_PATH }}/apacheproxy/var/log/apache2'
+      - '{{ LOCAL_DOCKER_VOLUME_STORAGE_PATH }}/apacheproxy/var/log/letsencrpyt'
+      - '{{ LOCAL_DOCKER_VOLUME_STORAGE_PATH }}/apacheproxy/etc/letsencrypt'
+
+  - name: Build list of docker networks
+    set_fact:
+      network_list: "{% set res = [ DEFAULT_NETWORK ] %}{% for network in EXTERNAL_DOCKER_NETWORKS %}{% if network not in res %}{% set ignored = res.append(network) %}{% endif %}{% endfor %}{{ res }}"
+
+  - name: Build list letsencryptdomains
+    #template:
+    set_fact:
+      letsencryptdomains: "{{ DOMAINS | community.general.json_query('[*].certificate') | join(',') }}"
+
+  - name: Create Apacheproxy Proxy Configuration
+    template:
+      src: templates/proxyconfig.j2
+      dest: '{{ LOCAL_DOCKER_VOLUME_STORAGE_PATH }}/apacheproxy/etc/apache2/sites-available/{{ item.name }}_proxy.conf'
+      owner: www-data
+      group: www-data
+      mode: 0644
+    loop: '{{ DOMAINS }}'
+
+  - name: Create Apacheproy Redirect Configuration
+    template:
+      src: templates/redirect.j2
+      dest: '{{ LOCAL_DOCKER_VOLUME_STORAGE_PATH }}/apacheproxy/etc/apache2/sites-available/{{ item.name }}_redirect.conf'
+      owner: www-data
+      group: www-data
+      mode: 0644
+    with_items: '{{ DOMAINS }}'
+    when: item.httpredirect | default(false) == true
+
+  - name: Create all necessary network
+    community.general.docker_network:
+      name: '{{ item }}'
+    with_items: '{{ network_list }}'
+
+  # - name: Build list of used ports
+  #   set_fact:
+  #     port_dict: "{{ DEFAULT_PORTS | combine( {item : item} ) }}"
+  #   with_items: '{{ ADDITIONAL_PORTS }}'
+  
+  - name: Configure apacheproxy container
+    community.general.docker_container:
+      name: apacheproxy
+      image: foxcris/docker-apacheproxy:stable
+      restart: yes
+      restart_policy: always
+      labels:
+        com.centurylinklabs.watchtower.enable: 'true'
+      published_ports: '{{ PUBLISHED_PORTS }}'
+      volumes:
+        - /etc/localtime:/etc/localtime:ro
+        - '{{ LOCAL_DOCKER_VOLUME_STORAGE_PATH }}/apacheproxy/etc/apache2/sites-available:/etc/apache2/sites-available'
+        - '{{ LOCAL_DOCKER_VOLUME_STORAGE_PATH }}/apacheproxy/var/log/apache2:/var/log/apache2'
+        - '{{ LOCAL_DOCKER_VOLUME_STORAGE_PATH }}/apacheproxy/var/log/letsencrpyt:/var/log/letsencrypt'
+        - '{{ LOCAL_DOCKER_VOLUME_STORAGE_PATH }}/apacheproxy/etc/letsencrypt:/etc/letsencrypt'
+      state: started
+      env:
+        LETSENCRYPTDOMAINS: "{{ letsencryptdomains }}"
+        LETSENCRYPTEMAIL: "{{ LETSENCRYPTEMAIL }}"
+      networks: "{% set res = [] %}{% for network in network_list %}{% set ignored = res.append({'name': network}) %}{% endfor %}{{ res }}"
+      stop_timeout: 30
+      networks_cli_compatible: 'yes'
